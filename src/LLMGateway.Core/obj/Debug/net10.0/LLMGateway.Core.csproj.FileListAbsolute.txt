@@ -1,0 +1,11 @@
+/Users/admin/Dev/YOLOProjects/prompt-shield/src/LLMGateway.Core/bin/Debug/net10.0/LLMGateway.Core.deps.json
+/Users/admin/Dev/YOLOProjects/prompt-shield/src/LLMGateway.Core/bin/Debug/net10.0/LLMGateway.Core.dll
+/Users/admin/Dev/YOLOProjects/prompt-shield/src/LLMGateway.Core/bin/Debug/net10.0/LLMGateway.Core.pdb
+/Users/admin/Dev/YOLOProjects/prompt-shield/src/LLMGateway.Core/obj/Debug/net10.0/LLMGateway.Core.GeneratedMSBuildEditorConfig.editorconfig
+/Users/admin/Dev/YOLOProjects/prompt-shield/src/LLMGateway.Core/obj/Debug/net10.0/LLMGateway.Core.AssemblyInfoInputs.cache
+/Users/admin/Dev/YOLOProjects/prompt-shield/src/LLMGateway.Core/obj/Debug/net10.0/LLMGateway.Core.AssemblyInfo.cs
+/Users/admin/Dev/YOLOProjects/prompt-shield/src/LLMGateway.Core/obj/Debug/net10.0/LLMGateway.Core.csproj.CoreCompileInputs.cache
+/Users/admin/Dev/YOLOProjects/prompt-shield/src/LLMGateway.Core/obj/Debug/net10.0/LLMGateway.Core.dll
+/Users/admin/Dev/YOLOProjects/prompt-shield/src/LLMGateway.Core/obj/Debug/net10.0/refint/LLMGateway.Core.dll
+/Users/admin/Dev/YOLOProjects/prompt-shield/src/LLMGateway.Core/obj/Debug/net10.0/LLMGateway.Core.pdb
+/Users/admin/Dev/YOLOProjects/prompt-shield/src/LLMGateway.Core/obj/Debug/net10.0/ref/LLMGateway.Core.dll

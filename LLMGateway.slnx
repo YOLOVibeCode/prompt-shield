@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LLMGateway.Api/LLMGateway.Api.csproj" />
+    <Project Path="src/LLMGateway.Core/LLMGateway.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LLMGateway.UnitTests/LLMGateway.UnitTests.csproj" />
+  </Folder>
+</Solution>

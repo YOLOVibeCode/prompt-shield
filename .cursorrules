@@ -1,0 +1,560 @@
+# LLM Gateway - .NET 8 Project Rules
+
+You are an expert .NET developer building an enterprise-grade LLM Gateway proxy service. This application intercepts LLM API requests, sanitizes sensitive data, and provides audit logging for compliance.
+
+## Project Overview
+
+- **Framework**: .NET 8 (latest LTS)
+- **Architecture**: Clean Architecture with vertical slices
+- **Primary Language**: C# 12
+- **Testing**: xUnit with FluentAssertions and NSubstitute
+- **Database**: PostgreSQL with Entity Framework Core
+- **Cache**: Redis (StackExchange.Redis)
+- **Observability**: OpenTelemetry, Serilog
+
+## Code Style & Conventions
+
+### C# Coding Standards
+
+```csharp
+// Use file-scoped namespaces
+namespace LLMGateway.Core.Services;
+
+// Use primary constructors for DI
+public class SanitizationService(
+    IMappingManager mappingManager,
+    IRuleRegistry ruleRegistry,
+    ILogger<SanitizationService> logger) : ISanitizationService
+{
+    public async Task<SanitizationResult> SanitizeAsync(string content, Session session)
+    {
+        // Implementation
+    }
+}
+
+// Prefer records for DTOs and immutable types
+public record SanitizationResult(
+    string SanitizedContent,
+    bool WasSanitized,
+    IReadOnlyDictionary<string, string> Mappings);
+
+// Use init-only properties for configuration
+public class GatewayOptions
+{
+    public required int Port { get; init; }
+    public required bool EnableTls { get; init; }
+    public TimeSpan SessionTimeout { get; init; } = TimeSpan.FromHours(8);
+}
+```
+
+### Naming Conventions
+
+- **Interfaces**: `IServiceName` (e.g., `ISanitizationEngine`)
+- **Async methods**: Suffix with `Async` (e.g., `ProcessRequestAsync`)
+- **Private fields**: `_camelCase` with underscore prefix
+- **Constants**: `PascalCase` (not SCREAMING_CASE)
+- **Extension methods**: In `Extensions` namespace, class named `{Type}Extensions`
+
+### File Organization
+
+```
+src/
+├── LLMGateway.Api/              # ASP.NET Core Web API
+│   ├── Controllers/
+│   ├── Middleware/
+│   ├── Filters/
+│   └── Program.cs
+├── LLMGateway.Core/             # Domain logic (no external dependencies)
+│   ├── Entities/
+│   ├── Interfaces/
+│   ├── Services/
+│   └── Exceptions/
+├── LLMGateway.Infrastructure/    # External concerns
+│   ├── Persistence/
+│   ├── Redis/
+│   ├── Encryption/
+│   └── LlmProviders/
+└── LLMGateway.Proxy/            # HTTP Proxy implementation
+    ├── Handlers/
+    └── Certificates/
+tests/
+├── LLMGateway.UnitTests/
+├── LLMGateway.IntegrationTests/
+└── LLMGateway.ArchitectureTests/
+```
+
+## Architecture Patterns
+
+### Dependency Injection
+
+```csharp
+// Register services in extension methods
+public static class ServiceCollectionExtensions
+{
+    public static IServiceCollection AddSanitizationServices(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.Configure<SanitizationOptions>(
+            configuration.GetSection("Sanitization"));
+        
+        services.AddSingleton<IRuleRegistry, RuleRegistry>();
+        services.AddScoped<ISanitizationEngine, SanitizationEngine>();
+        services.AddScoped<IComplianceDetector, ComplianceDetector>();
+        
+        return services;
+    }
+}
+```
+
+### Result Pattern (No Exceptions for Flow Control)
+
+```csharp
+// Use Result<T> for operations that can fail
+public readonly record struct Result<T>
+{
+    public T? Value { get; }
+    public string? Error { get; }
+    public bool IsSuccess => Error is null;
+    
+    public static Result<T> Success(T value) => new() { Value = value };
+    public static Result<T> Failure(string error) => new() { Error = error };
+}
+
+// Usage
+public async Task<Result<ProxyResponse>> ProcessAsync(ProxyRequest request)
+{
+    var policyResult = await _policyEngine.EvaluateAsync(request.UserId);
+    if (!policyResult.IsSuccess)
+        return Result<ProxyResponse>.Failure(policyResult.Error);
+    
+    // Continue processing...
+}
+```
+
+### Minimal APIs for Simple Endpoints
+
+```csharp
+// Use minimal APIs for straightforward endpoints
+app.MapGet("/health", () => Results.Ok(new { Status = "Healthy" }))
+   .WithName("HealthCheck")
+   .WithOpenApi();
+
+// Use controllers for complex endpoints with multiple actions
+[ApiController]
+[Route("api/v1/[controller]")]
+public class SessionsController(ISessionService sessionService) : ControllerBase
+{
+    [HttpGet("{sessionId}")]
+    public async Task<ActionResult<SessionDto>> GetSession(string sessionId)
+    {
+        // Implementation
+    }
+}
+```
+
+## Security Best Practices
+
+### Input Validation
+
+```csharp
+// Always validate at boundaries
+public class ProxyRequestValidator : AbstractValidator<ProxyRequest>
+{
+    public ProxyRequestValidator()
+    {
+        RuleFor(x => x.TargetProvider)
+            .NotEmpty()
+            .Must(BeValidProvider)
+            .WithMessage("Invalid LLM provider");
+        
+        RuleFor(x => x.Body)
+            .NotNull()
+            .Must(x => x.Length <= MaxRequestSize);
+    }
+}
+```
+
+### Secrets Management
+
+```csharp
+// Never hardcode secrets - use configuration
+// appsettings.json should reference environment variables or Key Vault
+{
+    "KeyVault": {
+        "Uri": "https://company-keyvault.vault.azure.net"
+    }
+}
+
+// Access secrets through strongly-typed options
+public class EncryptionOptions
+{
+    public required string KeyVaultUri { get; init; }
+    public required string MasterKeyName { get; init; }
+}
+```
+
+### Logging Security
+
+```csharp
+// Never log sensitive data directly
+_logger.LogInformation(
+    "Processing request {RequestId} for user {UserId}",
+    request.RequestId,
+    request.UserId);  // OK - not sensitive
+
+// BAD - never do this:
+// _logger.LogDebug("Request body: {Body}", request.Body);
+
+// Use destructuring carefully
+_logger.LogInformation(
+    "Request processed: {@Result}",
+    new { result.RequestId, result.WasSanitized, result.ProcessingTimeMs });
+```
+
+## Performance Guidelines
+
+### Async/Await Best Practices
+
+```csharp
+// Always use ConfigureAwait(false) in library code
+public async Task<string> ProcessAsync()
+{
+    var result = await _httpClient.GetAsync(url).ConfigureAwait(false);
+    return await result.Content.ReadAsStringAsync().ConfigureAwait(false);
+}
+
+// Use ValueTask for hot paths that often complete synchronously
+public ValueTask<Session?> GetSessionAsync(string sessionId)
+{
+    if (_cache.TryGetValue(sessionId, out var session))
+        return ValueTask.FromResult<Session?>(session);
+    
+    return new ValueTask<Session?>(LoadFromRedisAsync(sessionId));
+}
+```
+
+### Memory Efficiency
+
+```csharp
+// Use Span<T> and Memory<T> for string processing
+public static ReadOnlySpan<char> Sanitize(ReadOnlySpan<char> input)
+{
+    // Avoid allocations in hot paths
+}
+
+// Use ArrayPool for temporary buffers
+var buffer = ArrayPool<byte>.Shared.Rent(4096);
+try
+{
+    // Use buffer
+}
+finally
+{
+    ArrayPool<byte>.Shared.Return(buffer);
+}
+
+// Use StringBuilder for string concatenation
+var sb = new StringBuilder();
+foreach (var item in items)
+{
+    sb.Append(item);
+}
+```
+
+### Caching
+
+```csharp
+// Use IMemoryCache for short-lived, frequently accessed data
+public class CompiledRegexCache(IMemoryCache cache)
+{
+    public Regex GetOrCreate(string pattern)
+    {
+        return cache.GetOrCreate(pattern, entry =>
+        {
+            entry.SlidingExpiration = TimeSpan.FromHours(1);
+            return new Regex(pattern, RegexOptions.Compiled, TimeSpan.FromMilliseconds(50));
+        })!;
+    }
+}
+```
+
+## Testing Standards
+
+### Unit Test Structure
+
+```csharp
+public class SanitizationEngineTests
+{
+    private readonly ISanitizationEngine _sut;
+    private readonly IMappingManager _mappingManager = Substitute.For<IMappingManager>();
+    
+    public SanitizationEngineTests()
+    {
+        _sut = new SanitizationEngine(_mappingManager, CreateTestRules());
+    }
+    
+    [Fact]
+    public async Task SanitizeAsync_WithServerName_ReturnsAlias()
+    {
+        // Arrange
+        var content = "Query ServerDB01";
+        var session = CreateTestSession();
+        
+        // Act
+        var result = await _sut.SanitizeAsync(content, session);
+        
+        // Assert
+        result.WasSanitized.Should().BeTrue();
+        result.SanitizedContent.Should().Be("Query SERVER_0");
+        result.Mappings.Should().ContainKey("ServerDB01");
+    }
+    
+    [Theory]
+    [InlineData("ServerDB01", true)]
+    [InlineData("ProductionDB", true)]
+    [InlineData("localhost", false)]
+    public async Task SanitizeAsync_WithVariousInputs_DetectsCorrectly(
+        string input, bool shouldSanitize)
+    {
+        var result = await _sut.SanitizeAsync(input, CreateTestSession());
+        result.WasSanitized.Should().Be(shouldSanitize);
+    }
+}
+```
+
+### Integration Test Base
+
+```csharp
+public class IntegrationTestBase : IAsyncLifetime
+{
+    protected HttpClient Client { get; private set; } = null!;
+    private WebApplicationFactory<Program> _factory = null!;
+    
+    public async Task InitializeAsync()
+    {
+        _factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureServices(services =>
+                {
+                    // Replace real services with test doubles
+                    services.RemoveAll<IRedisConnection>();
+                    services.AddSingleton<IRedisConnection, FakeRedisConnection>();
+                });
+            });
+        
+        Client = _factory.CreateClient();
+        await SeedTestDataAsync();
+    }
+    
+    public async Task DisposeAsync()
+    {
+        await _factory.DisposeAsync();
+    }
+}
+```
+
+## Error Handling
+
+### Custom Exceptions
+
+```csharp
+// Define domain-specific exceptions
+public abstract class GatewayException : Exception
+{
+    public string Code { get; }
+    protected GatewayException(string code, string message) : base(message)
+    {
+        Code = code;
+    }
+}
+
+public class PolicyViolationException : GatewayException
+{
+    public string UserId { get; }
+    public PolicyViolationException(string userId, string reason)
+        : base("POLICY_VIOLATION", reason)
+    {
+        UserId = userId;
+    }
+}
+```
+
+### Global Exception Handler
+
+```csharp
+public class GlobalExceptionHandler : IExceptionHandler
+{
+    private readonly ILogger<GlobalExceptionHandler> _logger;
+    
+    public async ValueTask<bool> TryHandleAsync(
+        HttpContext context,
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogError(exception, "Unhandled exception: {Message}", exception.Message);
+        
+        var (statusCode, response) = exception switch
+        {
+            PolicyViolationException pve => (403, new ErrorResponse(pve.Code, pve.Message)),
+            ValidationException ve => (400, new ErrorResponse("VALIDATION_ERROR", ve.Message)),
+            _ => (500, new ErrorResponse("INTERNAL_ERROR", "An unexpected error occurred"))
+        };
+        
+        context.Response.StatusCode = statusCode;
+        await context.Response.WriteAsJsonAsync(response, cancellationToken);
+        return true;
+    }
+}
+```
+
+## Configuration
+
+### Options Pattern
+
+```csharp
+// Always use strongly-typed configuration
+public class GatewayOptions
+{
+    public const string SectionName = "Gateway";
+    
+    [Required]
+    public required int Port { get; init; }
+    
+    [Required]
+    public required string BindAddress { get; init; }
+    
+    public bool EnableTls { get; init; } = true;
+    
+    [Range(1, 1440)]
+    public int SessionTimeoutMinutes { get; init; } = 480;
+}
+
+// Register with validation
+services.AddOptions<GatewayOptions>()
+    .BindConfiguration(GatewayOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+```
+
+## Observability
+
+### Structured Logging with Serilog
+
+```csharp
+// Program.cs
+builder.Host.UseSerilog((context, config) =>
+{
+    config
+        .ReadFrom.Configuration(context.Configuration)
+        .Enrich.FromLogContext()
+        .Enrich.WithProperty("Application", "LLMGateway")
+        .WriteTo.Console(new JsonFormatter())
+        .WriteTo.Seq(context.Configuration["Seq:Uri"]!);
+});
+
+// Usage with scopes
+using (_logger.BeginScope(new Dictionary<string, object>
+{
+    ["RequestId"] = request.RequestId,
+    ["UserId"] = request.UserId
+}))
+{
+    _logger.LogInformation("Processing request");
+}
+```
+
+### OpenTelemetry Setup
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService("LLMGateway"))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddSource("LLMGateway")
+        .AddOtlpExporter())
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddPrometheusExporter());
+```
+
+## HTTP Client Best Practices
+
+### Typed HttpClient with Resilience
+
+```csharp
+// Register typed clients
+builder.Services.AddHttpClient<IOpenAiClient, OpenAiClient>(client =>
+{
+    client.BaseAddress = new Uri("https://api.openai.com/");
+    client.Timeout = TimeSpan.FromSeconds(120);
+})
+.AddStandardResilienceHandler();
+
+// Implementation
+public class OpenAiClient(HttpClient httpClient) : IOpenAiClient
+{
+    public async Task<ChatCompletion> CompleteAsync(ChatRequest request, CancellationToken ct)
+    {
+        var response = await httpClient.PostAsJsonAsync("v1/chat/completions", request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ChatCompletion>(ct) 
+            ?? throw new InvalidOperationException("Null response");
+    }
+}
+```
+
+## Entity Framework Core
+
+### DbContext Configuration
+
+```csharp
+public class GatewayDbContext(DbContextOptions<GatewayDbContext> options) 
+    : DbContext(options)
+{
+    public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
+    public DbSet<UserPolicy> UserPolicies => Set<UserPolicy>();
+    
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(GatewayDbContext).Assembly);
+    }
+}
+
+// Entity configuration
+public class AuditEntryConfiguration : IEntityTypeConfiguration<AuditEntry>
+{
+    public void Configure(EntityTypeBuilder<AuditEntry> builder)
+    {
+        builder.HasKey(e => e.EntryId);
+        builder.Property(e => e.EntryId).HasMaxLength(36);
+        builder.HasIndex(e => e.Timestamp);
+        builder.HasIndex(e => e.UserId);
+    }
+}
+```
+
+## Key Principles
+
+1. **KISS** - Keep It Simple, Stupid. Don't over-engineer.
+2. **YAGNI** - You Aren't Gonna Need It. Don't build features speculatively.
+3. **DRY** - Don't Repeat Yourself. Extract common patterns.
+4. **Fail Fast** - Validate early, return errors immediately.
+5. **Defense in Depth** - Multiple layers of security validation.
+6. **Observability First** - Log, trace, and measure everything important.
+
+## What NOT to Do
+
+- ❌ Don't use `dynamic` or `var` when type is unclear
+- ❌ Don't catch `Exception` without re-throwing or logging
+- ❌ Don't use `Task.Result` or `Task.Wait()` (causes deadlocks)
+- ❌ Don't log sensitive data (passwords, tokens, PII)
+- ❌ Don't use string concatenation for SQL queries
+- ❌ Don't ignore `CancellationToken` parameters
+- ❌ Don't create new `HttpClient` instances directly
+- ❌ Don't use `Thread.Sleep` - use `Task.Delay`
+- ❌ Don't suppress warnings without documented reason
+
